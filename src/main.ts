@@ -1,74 +1,12 @@
 import './style.css'
-
-type TimeFilter = 'all' | 'month' | '30days'
-
-type Expense = {
-  id: string
-  description: string
-  amount: number
-  category: string
-  date: string // ISO yyyy-mm-dd
-  createdAt: string // ISO
-}
-
-const STORAGE_KEY = 'em_expenses_v1'
-
-function loadExpenses(): Expense[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as Expense[]
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter(
-        (e) =>
-          typeof e.description === 'string' &&
-          typeof e.category === 'string' &&
-          typeof e.date === 'string' &&
-          typeof e.amount === 'number',
-      )
-      .map((e) => ({
-        ...e,
-        createdAt: e.createdAt ?? new Date(e.date).toISOString(),
-      }))
-  } catch {
-    return []
-  }
-}
-
-function saveExpenses(expenses: Expense[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(expenses))
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  }).format(amount)
-}
-
-function isWithinFilter(expense: Expense, filter: TimeFilter): boolean {
-  if (filter === 'all') return true
-  const today = new Date()
-  const d = new Date(expense.date)
-  if (Number.isNaN(d.getTime())) return false
-
-  if (filter === '30days') {
-    const cutoff = new Date()
-    cutoff.setDate(today.getDate() - 30)
-    return d >= cutoff && d <= today
-  }
-
-  if (filter === 'month') {
-    return (
-      d.getFullYear() === today.getFullYear() &&
-      d.getMonth() === today.getMonth()
-    )
-  }
-
-  return true
-}
+import {
+  type Expense,
+  type TimeFilter,
+  formatCurrency,
+  isWithinFilter,
+  loadExpenses,
+  saveExpenses,
+} from './expenseLogic'
 
 function createLayout() {
   const app = document.querySelector<HTMLDivElement>('#app')

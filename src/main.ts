@@ -1,11 +1,17 @@
 import './style.css'
 import {
+  CATEGORIES,
+  CATEGORY_LABELS,
   type Expense,
   type TimeFilter,
+  filterExpenses,
   formatCurrency,
+  formatExpenseDate,
   isWithinFilter,
   loadExpenses,
   saveExpenses,
+  updateExpense,
+  validateExpenseForm,
 } from './expenseLogic'
 
 function createLayout() {
@@ -36,7 +42,7 @@ function createLayout() {
 
       <main class="content">
         <section class="card add-card">
-          <h2>Add expense</h2>
+          <h2 id="form-heading">Add expense</h2>
           <form id="expense-form" class="expense-form">
             <div class="field-group">
               <label>
@@ -72,18 +78,14 @@ function createLayout() {
               <label>
                 <span>Category</span>
                 <select id="field-category">
-                  <option value="general">General</option>
-                  <option value="food">Food & groceries</option>
-                  <option value="transport">Transport</option>
-                  <option value="bills">Bills & utilities</option>
-                  <option value="shopping">Shopping</option>
-                  <option value="fun">Entertainment</option>
-                  <option value="health">Health</option>
-                  <option value="other">Other</option>
+                  ${CATEGORIES.map((c) => `<option value="${c}">${CATEGORY_LABELS[c]}</option>`).join('')}
                 </select>
               </label>
             </div>
-            <button type="submit" class="primary-btn">Save expense</button>
+            <div class="form-actions">
+              <button type="submit" class="primary-btn" id="submit-btn">Save expense</button>
+              <button type="button" class="secondary-btn" id="cancel-edit-btn" style="display: none;">Cancel</button>
+            </div>
           </form>
         </section>
 
@@ -116,7 +118,12 @@ function createLayout() {
   `
 }
 
-function render(expenses: Expense[], timeFilter: TimeFilter, categoryFilter: string) {
+function render(
+  expenses: Expense[],
+  timeFilter: TimeFilter,
+  categoryFilter: string,
+  onEdit: (expense: Expense) => void,
+) {
   const listEl = document.querySelector<HTMLUListElement>('#expense-list')
   const emptyEl = document.querySelector<HTMLParagraphElement>('#empty-state')
   const categoryFilterEl = document.querySelector<HTMLSelectElement>('#filter-category')
@@ -125,13 +132,8 @@ function render(expenses: Expense[], timeFilter: TimeFilter, categoryFilter: str
 
   if (!listEl || !emptyEl || !categoryFilterEl || !summaryMonthEl || !summary30El) return
 
-  const filtered = expenses.filter((e) => {
-    if (!isWithinFilter(e, timeFilter)) return false
-    if (categoryFilter !== 'all' && e.category !== categoryFilter) return false
-    return true
-  })
+  const filtered = filterExpenses(expenses, timeFilter, categoryFilter)
 
-  // Update list
   listEl.innerHTML = ''
 
   if (filtered.length === 0) {
@@ -146,13 +148,7 @@ function render(expenses: Expense[], timeFilter: TimeFilter, categoryFilter: str
       li.className = 'expense-item'
       li.dataset.id = exp.id
 
-      const date = new Date(exp.date)
-      const dateLabel = Number.isNaN(date.getTime())
-        ? exp.date
-        : date.toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric',
-          })
+      const dateLabel = formatExpenseDate(exp.date)
 
       li.innerHTML = `
         <div class="expense-main">
@@ -166,8 +162,14 @@ function render(expenses: Expense[], timeFilter: TimeFilter, categoryFilter: str
             <span class="expense-category">${exp.category}</span>
           </div>
         </div>
-        <button class="icon-btn delete-btn" aria-label="Delete expense">✕</button>
+        <div class="expense-actions">
+          <button class="icon-btn edit-btn" aria-label="Edit expense">✎</button>
+          <button class="icon-btn delete-btn" aria-label="Delete expense">✕</button>
+        </div>
       `
+
+      const editBtn = li.querySelector<HTMLButtonElement>('.edit-btn')
+      if (editBtn) editBtn.addEventListener('click', () => onEdit(exp))
 
       listEl.appendChild(li)
     }
@@ -204,6 +206,7 @@ function init() {
     expenses: loadExpenses(),
     timeFilter: 'month' as TimeFilter,
     categoryFilter: 'all',
+    editingId: null as string | null,
   }
 
   const form = document.querySelector<HTMLFormElement>('#expense-form')
@@ -218,70 +221,128 @@ function init() {
   const categoryFilterSelect =
     document.querySelector<HTMLSelectElement>('#filter-category')
   const listEl = document.querySelector<HTMLUListElement>('#expense-list')
+  const formHeading = document.querySelector<HTMLHeadingElement>('#form-heading')
+  const submitBtn = document.querySelector<HTMLButtonElement>('#submit-btn')
+  const cancelEditBtn = document.querySelector<HTMLButtonElement>('#cancel-edit-btn')
 
-  if (!form || !descriptionInput || !amountInput || !dateInput || !categorySelect || !timeFilterSelect || !categoryFilterSelect || !listEl) {
+  if (
+    !form ||
+    !descriptionInput ||
+    !amountInput ||
+    !dateInput ||
+    !categorySelect ||
+    !timeFilterSelect ||
+    !categoryFilterSelect ||
+    !listEl ||
+    !formHeading ||
+    !submitBtn ||
+    !cancelEditBtn
+  ) {
     return
   }
 
-  // Default date to today
   const today = new Date()
   const yyyy = today.getFullYear()
   const mm = String(today.getMonth() + 1).padStart(2, '0')
   const dd = String(today.getDate()).padStart(2, '0')
-  dateInput.value = `${yyyy}-${mm}-${dd}`
+
+  function setFormAddMode() {
+    if (!formHeading || !submitBtn || !cancelEditBtn || !form || !dateInput) return
+    state.editingId = null
+    formHeading.textContent = 'Add expense'
+    submitBtn.textContent = 'Save expense'
+    cancelEditBtn.style.display = 'none'
+    form.reset()
+    dateInput.value = `${yyyy}-${mm}-${dd}`
+  }
+
+  function setFormEditMode(exp: Expense) {
+    if (!descriptionInput || !amountInput || !dateInput || !categorySelect || !formHeading || !submitBtn || !cancelEditBtn) return
+    state.editingId = exp.id
+    descriptionInput.value = exp.description
+    amountInput.value = String(exp.amount)
+    dateInput.value = exp.date
+    categorySelect.value = exp.category
+    formHeading.textContent = 'Edit expense'
+    submitBtn.textContent = 'Update expense'
+    cancelEditBtn.style.display = 'inline-block'
+  }
 
   timeFilterSelect.value = state.timeFilter
+  setFormAddMode()
 
-  render(state.expenses, state.timeFilter, state.categoryFilter)
+  render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
 
   form.addEventListener('submit', (e) => {
     e.preventDefault()
-    const description = descriptionInput.value.trim()
-    const amount = parseFloat(amountInput.value)
-    const date = dateInput.value
-    const category = categorySelect.value || 'general'
+    const validation = validateExpenseForm(
+      descriptionInput.value,
+      parseFloat(amountInput.value),
+      dateInput.value,
+      categorySelect.value || 'general',
+    )
+    if (!validation.valid) return
+    const { description, amount, date, category } = validation.data
 
-    if (!description || !Number.isFinite(amount) || amount <= 0 || !date) {
-      return
+    if (state.editingId) {
+      const existing = state.expenses.find((e) => e.id === state.editingId)
+      if (existing) {
+        const updated: Expense = {
+          ...existing,
+          description,
+          amount,
+          category,
+          date,
+        }
+        state.expenses = updateExpense(state.expenses, updated)
+        saveExpenses(state.expenses)
+        setFormAddMode()
+      }
+    } else {
+      const expense: Expense = {
+        id: crypto.randomUUID(),
+        description,
+        amount,
+        category,
+        date,
+        createdAt: new Date().toISOString(),
+      }
+      state.expenses = [expense, ...state.expenses]
+      saveExpenses(state.expenses)
+      form.reset()
+      dateInput.value = `${yyyy}-${mm}-${dd}`
     }
 
-    const expense: Expense = {
-      id: crypto.randomUUID(),
-      description,
-      amount,
-      category,
-      date,
-      createdAt: new Date().toISOString(),
-    }
-
-    state.expenses = [expense, ...state.expenses]
-    saveExpenses(state.expenses)
-    render(state.expenses, state.timeFilter, state.categoryFilter)
-
-    form.reset()
-    dateInput.value = `${yyyy}-${mm}-${dd}`
+    render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
     descriptionInput.focus()
+  })
+
+  cancelEditBtn.addEventListener('click', () => {
+    setFormAddMode()
+    render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
   })
 
   timeFilterSelect.addEventListener('change', () => {
     state.timeFilter = timeFilterSelect.value as TimeFilter
-    render(state.expenses, state.timeFilter, state.categoryFilter)
+    render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
   })
 
   categoryFilterSelect.addEventListener('change', () => {
     state.categoryFilter = categoryFilterSelect.value
-    render(state.expenses, state.timeFilter, state.categoryFilter)
+    render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
   })
 
   listEl.addEventListener('click', (e) => {
     const target = e.target as HTMLElement
-    if (!target.classList.contains('delete-btn')) return
-    const item = target.closest<HTMLLIElement>('.expense-item')
-    if (!item || !item.dataset.id) return
-    const id = item.dataset.id
-    state.expenses = state.expenses.filter((exp) => exp.id !== id)
-    saveExpenses(state.expenses)
-    render(state.expenses, state.timeFilter, state.categoryFilter)
+    if (target.classList.contains('delete-btn')) {
+      const item = target.closest<HTMLLIElement>('.expense-item')
+      if (!item || !item.dataset.id) return
+      const id = item.dataset.id
+      state.expenses = state.expenses.filter((exp) => exp.id !== id)
+      saveExpenses(state.expenses)
+      if (state.editingId === id) setFormAddMode()
+      render(state.expenses, state.timeFilter, state.categoryFilter, setFormEditMode)
+    }
   })
 }
 
